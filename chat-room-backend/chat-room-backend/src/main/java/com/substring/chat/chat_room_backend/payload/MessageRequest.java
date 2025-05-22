@@ -17,6 +17,7 @@ public class MessageRequest {
 private String content;
 private String sender;
 private String roomId;
+private String imageUrl; //new
 
 
 private LocalDateTime messageTime;
