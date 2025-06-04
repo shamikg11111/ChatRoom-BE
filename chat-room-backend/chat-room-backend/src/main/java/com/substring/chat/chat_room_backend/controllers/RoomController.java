@@ -8,7 +8,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
+import java.util.*;
 import java.util.UUID;
 
 @RestController
@@ -22,7 +22,7 @@ public class RoomController {
         this.roomRepository = roomRepository;
     }
 
-    // create room
+    // Create room
     @PostMapping
     public ResponseEntity<?> createRoom(@RequestBody String roomId) {
         if (roomRepository.findByRoomId(roomId) != null) {
@@ -34,7 +34,7 @@ public class RoomController {
         return ResponseEntity.status(HttpStatus.CREATED).body(room);
     }
 
-    // join/get room
+    // Join/get room
     @GetMapping("/{roomId}")
     public ResponseEntity<?> joinRoom(@PathVariable String roomId) {
         Room room = roomRepository.findByRoomId(roomId);
@@ -44,7 +44,7 @@ public class RoomController {
         return ResponseEntity.ok(room);
     }
 
-    // get messages of the room (with backfill of missing messageId)
+    // Get messages of the room (with backfill of missing messageId)
     @GetMapping("/{roomId}/messages")
     public ResponseEntity<List<Message>> getMessages(
             @PathVariable String roomId,
@@ -65,7 +65,6 @@ public class RoomController {
             }
         }
         if (changed) {
-            // Persist the newly assigned IDs
             roomRepository.save(room);
         }
 
@@ -74,5 +73,20 @@ public class RoomController {
         int end = Math.min(messages.size(), start + size);
         List<Message> paginatedMessages = messages.subList(start, end);
         return ResponseEntity.ok(paginatedMessages);
+    }
+
+    // Get distinct members (senders) of the room
+    @GetMapping("/{roomId}/members")
+    public ResponseEntity<List<String>> getMembers(@PathVariable String roomId) {
+        Room room = roomRepository.findByRoomId(roomId);
+        if (room == null) {
+            return ResponseEntity.badRequest().build();
+        }
+        Set<String> membersSet = new HashSet<>();
+        for (Message msg : room.getMessages()) {
+            membersSet.add(msg.getSender());
+        }
+        List<String> membersList = new ArrayList<>(membersSet);
+        return ResponseEntity.ok(membersList);
     }
 }

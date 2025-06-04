@@ -1,55 +1,78 @@
-// src/main/java/com/substring/chat/chat_room_backend/controllers/ChatController.java
 package com.substring.chat.chat_room_backend.controllers;
 
 import com.substring.chat.chat_room_backend.entities.Message;
 import com.substring.chat.chat_room_backend.entities.Room;
 import com.substring.chat.chat_room_backend.payload.MessageRequest;
 import com.substring.chat.chat_room_backend.repositories.RoomRepository;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.stereotype.Controller;
-import org.springframework.web.bind.annotation.CrossOrigin;
+
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Controller
-@CrossOrigin("http://localhost:5173")
 public class ChatController {
 
-    private final SimpMessagingTemplate messagingTemplate;
     private final RoomRepository roomRepository;
 
-    @Autowired
-    public ChatController(SimpMessagingTemplate messagingTemplate,
-                          RoomRepository roomRepository) {
-        this.messagingTemplate = messagingTemplate;
+    public ChatController(RoomRepository roomRepository) {
         this.roomRepository = roomRepository;
     }
 
-    /**
-     * Listens for new messages (text or image) coming from the frontend.
-     * Builds a Message (with assigned messageId), persists it, and broadcasts.
-     */
+    // Regex to find @username tokens (alphanumeric + underscore)
+    private static final Pattern AT_PATTERN = Pattern.compile("@(\\w+)");
+
     @MessageMapping("/sendMessage/{roomId}")
-    public void sendMessage(
+    @SendTo("/topic/room/{roomId}")
+    public Message sendMessage(
             @DestinationVariable String roomId,
-            MessageRequest request
-    ) {
-        // 1) Construct a new Message with its own messageId
-        Message msg = new Message(
+            MessageRequest request) {
+
+        Room room = roomRepository.findByRoomId(request.getRoomId());
+        if (room == null) {
+            throw new RuntimeException("Room not found!");
+        }
+
+        // Extract mentionedUsers exactly as before:
+        List<String> mentionedUsers = new ArrayList<>();
+        if (request.getContent() != null) {
+            Matcher matcher = AT_PATTERN.matcher(request.getContent());
+            Set<String> found = new HashSet<>();
+            while (matcher.find()) {
+                found.add(matcher.group(1));
+            }
+            if (!found.isEmpty()) {
+                // Gather all existing senders + the new sender
+                Set<String> currentSenders = new HashSet<>();
+                for (Message m : room.getMessages()) {
+                    currentSenders.add(m.getSender());
+                }
+                currentSenders.add(request.getSender());
+
+                for (String u : found) {
+                    if (!u.equals(request.getSender()) && currentSenders.contains(u)) {
+                        mentionedUsers.add(u);
+                    }
+                }
+            }
+        }
+
+        // ← HERE IS THE ONLY CHANGE: call the new constructor, adding request.getReplyToMessageId()
+        Message message = new Message(
                 request.getSender(),
                 request.getContent(),
-                request.getImageUrl()
+                request.getImageUrl(),
+                mentionedUsers,
+                request.getReplyToMessageId()
         );
 
-        // 2) Persist into MongoDB
-        Room room = roomRepository.findByRoomId(roomId);
-        if (room == null) throw new RuntimeException("Room not found: " + roomId);
-
-        room.getMessages().add(msg);
+        // Save & broadcast exactly as before:
+        room.getMessages().add(message);
         roomRepository.save(room);
-
-        // 3) Broadcast the newly-created Message to all subscribers
-        messagingTemplate.convertAndSend("/topic/room/" + roomId, msg);
+        return message;
     }
 }
